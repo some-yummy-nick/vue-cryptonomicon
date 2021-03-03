@@ -1,3 +1,5 @@
+![screenshot](https://github.com/some-yummy-nick/vue-cryptonomicon/blob/master/vue-cryptonomicon.png)
+
 # cryptonomicon
 [Документация API](https://min-api.cryptocompare.com/documentation)
 
