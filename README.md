@@ -1,5 +1,7 @@
 ![screenshot](https://github.com/some-yummy-nick/vue-cryptonomicon/blob/master/vue-cryptonomicon.png)
 
+https://some-yummy-cryptonomicon.netlify.app/
+
 # cryptonomicon
 [Документация API](https://min-api.cryptocompare.com/documentation)
 
