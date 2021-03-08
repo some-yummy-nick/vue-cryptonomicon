@@ -1,7 +1,7 @@
 import * as price from "./rest/price";
-import * as coinlist from "./rest/coinlist";
+import * as coinList from "./rest/coinlist";
 
 export default {
   price,
-  coinlist
+  coinList
 };

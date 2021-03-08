@@ -82,13 +82,13 @@
           <br />
           Фильтр: <input type="text" v-model="filter" @input="page = 1" />
         </div>
-        <div v-if="items.length">
+        <div v-if="items">
           <hr class="w-full border-t border-gray-600 my-4" />
           <dl class="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-3">
             <div
               v-for="item in paginatedTickers"
               :key="item.name"
-              @click="selectedItem=item"
+              @click="selectedItem = item"
               :class="{ 'border-purple-800': selectedItem === item }"
               class="bg-white overflow-hidden shadow rounded-lg border-4 border-solid cursor-pointer"
             >
@@ -97,7 +97,7 @@
                   {{ item.name }} - USD
                 </dt>
                 <dd class="mt-1 text-3xl font-semibold text-gray-900">
-                  {{ item.price }}
+                  {{ formatPrice(item.price) }}
                 </dd>
               </div>
               <div class="w-full border-t border-gray-200"></div>
@@ -128,10 +128,7 @@
           <h3 class="text-lg leading-6 font-medium text-gray-900 my-8">
             {{ selectedItem.name }} - USD
           </h3>
-          <div
-            class="flex items-end border-gray-600 border-b border-l h-64"
-            style="overflow: hidden;overflow-x: scroll"
-          >
+          <div class="flex items-end border-gray-600 border-b border-l h-64">
             <div
               v-for="(bar, i) in normalizedGraph"
               :style="{ height: `${bar}%` }"
@@ -176,6 +173,7 @@
 import api from "@/api";
 import storage from "./storage";
 import Loading from "@/components/Loading";
+import { subscribeToTicker, unsubscribeFromTicker } from "./api/socket";
 
 export default {
   name: "App",
@@ -187,12 +185,12 @@ export default {
       selectedItem: null,
       graph: [],
       interval: null,
-      coinlist: [],
+      coinList: [],
       isLoading: true,
       hasTicker: false,
       suggestsItems: [],
       page: 1,
-      pageLength: 2,
+      pageLength: 10,
       filter: ""
     };
   },
@@ -209,9 +207,13 @@ export default {
       return this.page * this.pageLength;
     },
     filteredTickers() {
-      return this.items.filter(item => item.name.toLowerCase().includes(this.filter.toLowerCase()));
+      if (!this.items) return false;
+      return this.items.filter(item =>
+        item.name.toLowerCase().includes(this.filter.toLowerCase())
+      );
     },
     paginatedTickers() {
+      if (!this.filteredTickers) return false;
       return this.filteredTickers.slice(this.startIndex, this.endIndex);
     },
     hasNextPage() {
@@ -220,7 +222,7 @@ export default {
     normalizedGraph() {
       const maxValue = Math.max(...this.graph);
       const minValue = Math.min(...this.graph);
-      if (minValue === minValue) {
+      if (minValue === maxValue) {
         return this.graph.map(() => 50);
       }
       return this.graph.map(
@@ -233,10 +235,9 @@ export default {
         page: this.page
       };
     }
-
   },
   watch: {
-    pageStateOptions(value){
+    pageStateOptions(value) {
       window.history.pushState(
         null,
         document.title,
@@ -251,44 +252,42 @@ export default {
         this.page -= 1;
       }
     },
-    selectedItem(){
-      this.graph=[];
+    selectedItem() {
+      this.graph = [];
     }
   },
   methods: {
-    async getPrice(name) {
-      const res = await api.price.index(name);
-      const price = res.data.USD;
-      const findedItem = this.items.find(item => item.name === name);
-      if (findedItem) {
-        findedItem.price = price > 1 ? price.toFixed(2) : price.toPrecision(2);
-      }
-      if (this.selectedItem?.name === name) {
-        this.graph.push(price);
-      }
+    async updateTickers() {
+      if (!this.items) return false;
+      this.items.forEach(item => {
+        subscribeToTicker(item.name, newPrice =>
+          this.updateTicker(item.name, newPrice)
+        );
+        if (item === this.selectedItem) {
+          this.graph.push(item.price);
+        }
+      });
     },
     async getCoinList() {
-      const res = await api.coinlist.index();
+      const res = await api.coinList.index();
       this.isLoading = false;
-      this.coinlist = res.data.Data;
+      this.coinList = res.data.Data;
     },
     async getFromStorage() {
-      const items = await storage.getItem("tickers");
-      if (items) {
-        this.items = items;
-        items.forEach(ticker => {
-          this.subscribeToUpdates(ticker.name);
-        });
-      }
+      this.items = (await storage.getItem("tickers")) || [];
+      this.updateTickers();
     },
     async add() {
-      if (!this.items.find(item => item.name === this.ticker)) {
+      if (!this.items || !this.items.find(item => item.name === this.ticker)) {
         const currentTicker = {
           name: this.ticker,
-          price: "-"
+          price: null
         };
         this.items = [...this.items, currentTicker];
         this.filter = "";
+        subscribeToTicker(currentTicker.name, newPrice =>
+          this.updateTicker(currentTicker.name, newPrice)
+        );
         const itemsFromStorage = await storage.getItem("tickers");
         let items = [];
         if (itemsFromStorage) {
@@ -300,7 +299,6 @@ export default {
         }
         items.push(currentTicker);
         storage.setItem("tickers", items);
-        this.subscribeToUpdates(currentTicker.name);
         this.ticker = null;
         this.suggestsItems = [];
         this.hasTicker = false;
@@ -320,9 +318,25 @@ export default {
         item => item.id === deletedItem.id
       );
       items.splice(findedItemIndex, 1);
+      unsubscribeFromTicker(deletedItem.name);
 
       await storage.setItem("tickers", items);
-      // clearInterval(this.interval);
+    },
+    updateTicker(tickerName, price) {
+      this.items
+        .filter(t => t.name === tickerName)
+        .forEach(t => {
+          if (t === this.selectedItem) {
+            this.graph.push(price);
+          }
+          t.price = price;
+        });
+    },
+
+    formatPrice(price) {
+      if (price) {
+        return price > 1 ? price.toFixed(2) : price.toPrecision(2);
+      }
     },
     getUrl() {
       let params = new URL(document.location).searchParams;
@@ -340,13 +354,13 @@ export default {
       let suggestsItems = [];
       if (this.ticker) {
         const value = this.ticker.toLowerCase();
-        for (let item in this.coinlist) {
-          const symbolValue = this.coinlist[item]["Symbol"].toLowerCase();
-          const fullNameValue = this.coinlist[item]["FullName"].toLowerCase();
+        for (let item in this.coinList) {
+          const symbolValue = this.coinList[item]["Symbol"].toLowerCase();
+          const fullNameValue = this.coinList[item]["FullName"].toLowerCase();
           if (symbolValue.includes(value) || fullNameValue.includes(value)) {
             const coin = {
-              Id: this.coinlist[item]["Id"],
-              Symbol: this.coinlist[item]["Symbol"]
+              Id: this.coinList[item]["Id"],
+              Symbol: this.coinList[item]["Symbol"]
             };
             suggestsItems.push(coin);
           }
@@ -367,9 +381,6 @@ export default {
     clickToSuggest(name) {
       this.ticker = name;
       this.add();
-    },
-    subscribeToUpdates(name) {
-      this.interval = setInterval(this.getPrice.bind(null, name), 3000);
     },
     closeGraph() {
       this.selectedItem = null;
